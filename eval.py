@@ -1,40 +1,62 @@
 import time
+from pathlib import Path
+
 import torch
 import subprocess
 import os
 from model import EAST
-from detect import detect_dataset
-import numpy as np
+from detect import detect_dataset, default_name_filter, default_draw_for_name
 import shutil
 
-
-def eval_model(model_name, test_img_path, submit_path, save_flag=True):
-	if os.path.exists(submit_path):
-		shutil.rmtree(submit_path) 
-	os.mkdir(submit_path)
-
-	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-	model = EAST(False).to(device)
-	model.load_state_dict(torch.load(model_name))
-	model.eval()
-	
-	start_time = time.time()
-	detect_dataset(model, device, test_img_path, submit_path)
-	os.chdir(submit_path)
-	res = subprocess.getoutput('zip -q submit.zip *.txt')
-	res = subprocess.getoutput('mv submit.zip ../')
-	os.chdir('../')
-	res = subprocess.getoutput('python ./evaluate/script.py –g=./evaluate/gt.zip –s=./submit.zip')
-	print(res)
-	os.remove('./submit.zip')
-	print('eval time is {}'.format(time.time()-start_time))	
-
-	if not save_flag:
-		shutil.rmtree(submit_path)
+from reusable import load_east_model
 
 
-if __name__ == '__main__': 
-	model_name = './pths/east_vgg16.pth'
-	test_img_path = os.path.abspath('../ICDAR_2015/test_img')
-	submit_path = './submit'
-	eval_model(model_name, test_img_path, submit_path)
+def eval_model(
+    model_name: Path,
+    test_img_path: Path,
+    submit_path: Path,
+    save_flag: bool = True,
+    clear_submit: bool = True,
+):
+    if submit_path.exists():
+        if clear_submit:
+            shutil.rmtree(str(submit_path.absolute()))
+        else:
+            raise ValueError(
+                f"Submit path exists and clearing is set to false: '{submit_path.absolute()}'"
+            )
+    os.mkdir(str(submit_path))
+
+    model, device = load_east_model(model_name, pretrained=False)
+
+    start_time = time.time()
+
+    detect_dataset(
+        model, device, test_img_path, submit_path, name_filter=default_name_filter
+    )
+
+    os.chdir(str(submit_path))
+    try:
+        subprocess.getoutput("zip -q submit.zip *.txt")
+        subprocess.getoutput("mv submit.zip ../")
+    finally:
+        os.chdir("../")
+    res = subprocess.getoutput(
+        "python ./evaluate/script.py –g=./evaluate/gt.zip –s=./submit.zip"
+    )
+    print("-" * 80)
+    print(res)
+    print("-" * 80)
+    os.remove("./submit.zip")
+
+    print(f"Evaluation time: {time.time() - start_time}")
+
+    if not save_flag:
+        shutil.rmtree(submit_path)
+
+
+if __name__ == "__main__":
+    model_name = Path("./pths/east_vgg16.pth")
+    test_img_path = Path("../ICDAR_2015/test_img")
+    submit_path = Path("./submit")
+    eval_model(model_name, test_img_path, submit_path)
